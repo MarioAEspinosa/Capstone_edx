@@ -1,0 +1,739 @@
+---
+title: "homicide_vs_unemployment"
+author: "Mario Espinosa"
+date: "2023-12-02"
+output: 
+  pdf_document: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+source("join_sources.R")
+source("handle_missing_and_plots.R")
+source("models.R")
+```
+
+## Introduction
+
+Data science can have a positive impact on the world if we view it through the lens of data and the insights that the analysis and results provide.
+
+The goal of this analysis is to verify the correlation and attempt to predict the homicide rate of a country based on the unemployment rate, GDP per capita, and GDP growth.
+
+The datasets come from different sources, and the process of joining the different files can be challenging.
+
+Sections: Merging data, Handling missing values, Analysis, modeling, and conclusions
+
+List of the sources and links:
+
+[International Monetary Fund. Real GDP growth (Annual percent change)](https://www.imf.org/external/datamapper/NGDP_RPCH@WEO/OEMDC/ADVEC/WEOWORLD)
+
+[International Monetary Fund. GDP per capita, current prices (Purchasing power parity; international dollars per capita)](https://www.imf.org/external/datamapper/NGDPDPC@WEO/OEMDC/ADVEC/WEOWORLD)
+
+[ISO code for the International Monetary Fund (Json)](https://www.imf.org/external/datamapper/api/v1/countries)
+
+[United Nations Office of Drugs and Crime. Victims of intentional murder](https://dataunodc.un.org/dp-intentional-homicide-victims)
+
+[The World Bank. Unemployment, total (% of total labor force) (modeled ILO estimate)](https://data.worldbank.org/indicator/SL.UEM.TOTL.ZS?most_recent_year_desc=false)
+
+
+Merging the Data:
+
+Overall, this section combines data from various sources, cleans and reshapes it, and creates a merged dataset for further analysis. It specifically focuses on intentional homicide rates, unemployment rates, and GDP-related information for different countries from 2000 to 2020.
+
+Please note that some countries in the dataset are the same nation but with distinctive separations. For example, The United Kingdom of Great Britain and Northern Ireland (UK) can appear in the dataset several times as a country with (England, Wales, and Scotland) and the northern part of the island of Ireland (Northern Ireland). That's why the length of the country list in all datasets is more than 200.
+
+Each dataset covers different years. The amount of NA's only declines in the year 2000, and for the end year, some values are predictions, such as the GDP up to the year 2028. Therefore, we will use the year 2020 as the last one.
+
+
+
+Real GDP Growth (Annual Percent Change)
+
+```{r eval=TRUE, echo=FALSE}
+head(imf_dirty, 5)
+```
+
+This CSV contains information about the GDP Annual percent change of 230 countries from the years 1980 to 2028. As seen in this dataset, information before 2000 tends to be incomplete. It makes sense that the data has the columns as years since there is only one indicator, but for further use, we reshaped the data.
+
+```{r eval=TRUE, echo=FALSE}
+head(imf_reshaped, 5)
+```
+
+
+International Monetary Fund. GDP per Capita, Current Prices (Purchasing Power Parity; International Dollars per Capita)
+
+```{r eval=TRUE, echo=FALSE}
+head(gdp_pc_dirty, 5)
+```
+
+This dataset is similar to the last one, and the end result is the same with the obvious difference that this data is about GDP per capita. This CSV has information about 228 countries from the years 1980 to 2028.
+
+
+```{r eval=TRUE, echo=FALSE}
+head(gdp_pc_reshaped, 5)
+```
+
+We can merge these two datasets with no problem.
+
+
+```{r eval=FALSE, echo=TRUE}
+gdp_merged <- left_join(gdp_pc_reshaped, imf_reshaped, by = c("Country", "Year"))
+```
+
+And we have the merged datasets.
+
+```{r eval=TRUE, echo=FALSE}
+head(gdp_merged)
+```
+
+
+
+Victims of Intentional Murder
+
+```{r eval=TRUE, echo=FALSE}
+head(homicide_dirty)
+```
+
+
+This dataset has information about the homicide rate of 204 countries from the years 1980 to 2020. It also contains several columns with more indicators. The indicators range from the source of data collection to the sex of victims of intentional murder. Selecting the relevant information for this analysis:
+
+```{r eval=TRUE, echo=FALSE}
+head(homicide)
+```
+
+
+This project aims to analyze the correlation between the homicide rate with other factors such as unemployment rate, GDP per capita, and GDP growth. The selection of indicators needs to focus on the rate per 100,000 population and the total number of murders, regardless of the sex or age of the victim and their relationship with the perpetrator.
+
+
+Unemployment, Total % of Labor Force
+
+```{r eval=TRUE, echo=FALSE}
+head(unemployment_dirty, 3)
+```
+
+
+This dataset contains information about unemployment in 266 countries from the years 1960 to 2022. It also contains the indicator and indicator code that are not relevant.
+
+```{r eval=TRUE, echo=FALSE}
+head(unemployment, 3)
+```
+
+
+Since the datasets have discrepancies between the names of the countries, the ISO code is going to be the variable selected for the join. The same country with different names in each set, such as "Venezuela, RB," "Venezuela (Bolivarian Republic of)," and "Venezuela."
+
+Using the ISO code to join the datasets:
+
+The homicide and unemployment tables already have the ISO code, so we can merge them easily.
+
+```{r eval=FALSE, echo=TRUE}
+homicide_unemployment <- left_join(homicide, unemployment_reshaped, by = c("iso_code", "Year"))
+```
+
+
+The new dataset looks like this:
+
+```{r eval=TRUE, echo=FALSE}
+head(homicide_unemployment)
+```
+
+
+Since the datasets from the International Monetary Fund do not have an ISO code, we need to add it to the sets using the data from the json file.
+
+```{r eval=TRUE, echo=FALSE}
+head(json_merged)
+```
+
+We join the JSON data to the GDP data, and finally, we have a nice file to work with.
+
+```{r eval=FALSE, echo=TRUE}
+final_merged_dataset <- left_join(homicide_unemployment, gdp_iso, by = c("iso_code", "Year"))
+```
+
+
+The final dataset looks like this:
+
+```{r eval=TRUE, echo=FALSE}
+head(final_merged_dataset)
+```
+
+As we are going to handle missing values with the mean of the indicators, we split the data to preserve the original.
+
+```{r eval=FALSE, echo=TRUE}
+# Create the validation set to keep the integrity of the original data 
+# Set a seed for reproducibility
+set.seed(123)
+
+# Convert 'Year' to Date format
+df$Year <- as.Date(as.character(df$Year), format = "%Y")
+
+# Create a time-based data partition for the entire dataset
+partition <- createDataPartition(df$homicide_rate, times = 1, p = 0.8, list = FALSE)
+
+# Extract training and test sets
+train_set <- df[partition, ]
+test_set <- df[-partition, ]
+```
+
+The train set has the information from 2000 to 2018 and the test set has the remaining 2 years for the predictions 
+
+
+## Handling missing values
+
+In this section we address missing values through interpolation
+Checking countries with missing values
+
+Let's begin by identifying countries with a significant number of missing values.
+
+```{r eval=TRUE, echo=FALSE}
+top_missing
+```
+
+Notably, the UK regions exhibit a notable presence of missing values. This occurrence is attributed to certain datasets lacking information about these regions. However, our strategy involves imputing missing values rather than eliminating entire countries.
+
+Before applying imputation methods, it's crucial to consider the outliers in our data.
+
+```{r eval=TRUE, echo=FALSE}
+for (col in numeric_columns) {
+  boxplot(train_set[[col]], main=col, col="skyblue", border="black", notch=TRUE)
+}
+
+pairs(train_set[, numeric_columns], pch=16, col="darkblue")
+```
+
+The boxplot illustrates a considerable skewness in all values. The criteria for outlier elimination are set at the 5th and 95th percentiles.
+
+```{r eval=FALSE, echo=TRUE}
+# Define conditions for outliers
+outlier_conditions <- 
+  train_set$homicide_rate < quantile(train_set$homicide_rate, 0.05, na.rm = TRUE) |
+  train_set$homicide_rate > quantile(train_set$homicide_rate, 0.95, na.rm = TRUE) |
+  train_set$unemployment_rate < quantile(train_set$unemployment_rate, 0.05, na.rm = TRUE) |
+  train_set$unemployment_rate > quantile(train_set$unemployment_rate, 0.95, na.rm = TRUE) |
+  train_set$GDP < quantile(train_set$GDP, 0.05, na.rm = TRUE) |
+  train_set$GDP > quantile(train_set$GDP, 0.95, na.rm = TRUE)
+
+# Replace outlier values with NA
+train_set <- train_set %>%
+  mutate(
+    homicide_rate = ifelse(outlier_conditions, NA, homicide_rate),
+    unemployment_rate = ifelse(outlier_conditions, NA, unemployment_rate),
+    GDP = ifelse(outlier_conditions, NA, GDP)
+  )
+
+```
+
+With outliers addressed, we can employ the interpolation method. To ensure accuracy, we sort the data by date.
+
+```{r eval=FALSE, echo=TRUE}
+train_set <- train_set[order(train_set$Year), ]
+```
+Now, let's proceed with interpolation.
+
+```{r eval=FALSE, echo=TRUE}
+# Create an imputation model
+imputation_model <- mice(train_set[, c("homicide_rate", "unemployment_rate", "GDP_pc", "GDP")]
+                         , method = "pmm")
+
+# Impute missing values
+imputed_data <- complete(imputation_model)
+
+# Replace missing values in train_set with imputed values
+train_set$homicide_rate[is.na(train_set$homicide_rate)] <- imputed_data$homicide_rate[is.na(train_set$homicide_rate)]
+train_set$unemployment_rate[is.na(train_set$unemployment_rate)] <- imputed_data$unemployment_rate[is.na(train_set$unemployment_rate)]
+train_set$GDP_pc[is.na(train_set$GDP_pc)] <- imputed_data$GDP_pc[is.na(train_set$GDP_pc)]
+train_set$GDP[is.na(train_set$GDP)] <- imputed_data$GDP[is.na(train_set$GDP)]
+```
+
+Now, with the missing values imputed we can continue but first lets eliminate the means are we no longer need them
+
+```{r eval=FALSE, echo=TRUE}
+train_set <- train_set %>%
+  select(Country, Region, Subregion,
+         Year, homicide_rate,
+         unemployment_rate, GDP_pc, GDP)
+```
+
+```{r eval=TRUE, echo=FALSE}
+summary(train_set)
+```
+
+
+## Analysis: 
+
+Let's begin our analysis with a correlation test on relevant numeric variables:
+
+```{r eval=TRUE, echo=FALSE}
+ggplot(cor_long, aes(x = variable1, y = variable2, fill = correlation)) +
+  geom_tile() +
+  scale_fill_gradientn(colours = colorRampPalette(c("blue", "white", "red"))(20)) +
+  labs(title = "Correlation Heatmap") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),  
+        axis.text.y = element_text(size = 8),  
+        plot.title = element_text(size = 12))  
+cor_matrix
+```
+
+
+Now, let's visualize the mean of homicides over the years:
+
+```{r eval=TRUE, echo=FALSE}
+train_set %>% 
+  group_by(Year) %>%
+  summarise(mean_homicide_rate = mean(homicide_rate)) %>%
+  ggplot(aes(x = Year, y = mean_homicide_rate)) +
+  geom_point(color = "skyblue") +
+  labs(title = "Time Series of Homicide Rate",
+       x = "Year",
+       y = "Homicide Mean")
+```
+
+
+Explore the relationship between GDP per Capita and Homicide Rate:
+
+```{r eval=TRUE, echo=FALSE}
+train_set %>%
+  ggplot(aes(x = homicide_rate, y = GDP_pc, color = Region)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +  # regression line
+  geom_text(aes(label = sprintf("Corr: %.2f", cor(homicide_rate, GDP_pc))),
+            x = min(train_set$homicide_rate),
+            y = max(train_set$GDP_pc),
+            hjust = 0, vjust = 1, color = "black") +  # correlation coefficient
+  labs(
+    title = "Relationship between GDP per Capita and Homicide Rate",
+    x = "Homicide Rate",
+    y = "GDP per Capita"
+  ) +
+  theme_minimal()
+```
+
+
+Relationship between GDP and homicide rate
+
+```{r eval=TRUE, echo=FALSE}
+train_set %>% 
+  group_by(Country) %>%
+  ggplot(aes(x = homicide_rate, y = GDP)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +  # Add a regression line
+  geom_text(aes(label = sprintf("Corr: %.2f", cor(homicide_rate, GDP))),
+            x = min(train_set$homicide_rate),
+            y = max(train_set$GDP),
+            hjust = 0, vjust = 1, color = "black") +  # Add correlation coefficient
+  labs(
+    title = "Relationship between GDP Rate and Homicide Rate",
+    x = "Homicide Rate",
+    y = "GDP Rate"
+  ) +
+  theme_minimal()
+```
+
+
+Relationship between unemployment and homicide rate
+
+```{r eval=TRUE, echo=FALSE}
+train_set %>%
+  ggplot(aes(x = homicide_rate, y = unemployment_rate, color = Region)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +  # Add a regression line
+  geom_text(aes(label = sprintf("Corr: %.2f", cor(homicide_rate, unemployment_rate))),
+            x = min(train_set$homicide_rate),
+            y = max(train_set$unemployment_rate),
+            hjust = 0, vjust = 1, color = "black") +  # Add correlation coefficient
+  labs(
+    title = "Relationship between Unemployment Rate and Homicide Rate",
+    x = "Homicide Rate",
+    y = "Unemployment Rate"
+  ) +
+  theme_minimal()
+```
+
+
+## Modeling
+Let's use the root mean squared error (RMSE) for now. For the evaluation purpose, let's calculate the mean and standard deviation on the test set first.
+
+```{r eval=TRUE, echo=TRUE}
+mean(test_set$homicide_rate)
+sd(test_set$homicide_rate)
+```
+
+Now, let's start with the first model.
+
+```{r eval=TRUE, echo=TRUE}
+# Calculate the overall average homicide rate and use it as a metric for the evaluation 
+average <- mean(train_set$homicide_rate)
+
+# Make predictions using the average
+predictions <- rep(average, length(test_set$homicide_rate))
+
+# Calculate the RMSE
+rmse <- sqrt(mean((test_set$homicide_rate - predictions)^2))
+
+rmse
+```
+An RMSE of 11.20 indicates predictions with the average.
+
+
+Let's now consider the mean of each country for homicide rates.
+
+```{r eval=TRUE, echo=TRUE}
+# Calculate the mean of homicide_rate by each country
+b_country <- train_set %>%
+  group_by(Country) %>%
+  summarize(b_country = mean(homicide_rate - average))
+
+# Predict homicide rates with the country effect
+predictions <- train_set %>%
+  left_join(b_country, by = "Country") %>%
+  mutate(pred = average + b_country) %>%
+  pull(pred)
+
+# Evaluate the performance using RMSE 
+RMSE <- RMSE(test_set$homicide_rate, predictions)
+
+RMSE
+
+```
+
+\begin{equation}
+\hat{Y}_i = \mu + b_i
+\end{equation}
+
+$$
+\hat{Y} \text{ is the predicted homicide rate},
+$$
+
+$$
+\mu \text{ is the overall average homicide rate},
+$$
+
+$$
+\beta_i \text{ is the country effect (mean difference between the homicide rate in this country and the overall average)}.
+$$
+
+From 11.20 to 13.28 is not an improvement; let's change to a time-based model.
+
+Now, let's move into time-based predictions using ARIMA (AutoRegressive Integrated Moving Average), as our data spans across years.
+
+First, let's conduct a Dickey-Fuller test on the data frame to determine if the data is stationary.
+
+```{r eval=TRUE, echo=FALSE}
+adf_result <- adf.test(train_set$homicide_rate)
+cat("ADF Statistic:", adf_result$statistic)
+cat("p-value:", adf_result$p.value)
+```
+The ADF suggests weak evidence of non-stationarity, indicating that the homicide rate does not change by itself over time.
+
+For the ARIMA model without external variables, let's consider the best parameters using auto.arima().
+
+
+for now the ARIMA model will only include the homicide rate and the frequency is set to 1 since we have the yearly information
+this model without external variables takes into consideration 3 values:
+autoregressive order (p): the past observations included in the model
+differencing order (d): the number of differences needed to make the time series stationary
+moving average (q): the number of past forecast error included on the model
+all of them got calculate using the function auto.arima()
+
+```{r eval=TRUE, echo=TRUE}
+# Using homicide_rate as the original series
+ts_data <- ts(train_set$homicide_rate, frequency = 1)
+
+# Using auto arima to select an appropriate ARIMA model based on the AIC 
+# (Akaike Information Criterion) value
+arima_model <- auto.arima(ts_data)
+
+# Summary of the model
+summary(arima_model)
+
+# Make predictions for the specified number of periods ahead
+predicted_diff <- forecast(arima_model, h = 1, level = c(80, 95))$mean
+
+# Create a vector to store the predicted original series
+# Combine the last value of the training set with the predicted differences
+predicted_original <- c(tail(train_set$homicide_rate, 1), predicted_diff)
+
+# Calculate RMSE
+RMSE <- RMSE(predicted_original - test_set$homicide_rate)
+
+RMSE
+```
+
+\begin{equation}
+ X_t = c + \phi_1 X_{t-1} + \phi_2 X_{t-2} + \ldots + \phi_p X_{t-p} + \varepsilon_t + \theta_1 \varepsilon_{t-1} + \theta_2 \varepsilon_{t-2} + \ldots + \theta_q \varepsilon_{t-q} 
+\end{equation}
+
+where:
+$$
+X_t \text{ is the observed time series}.
+$$
+
+$$
+\varepsilon_t \text{ is the error term}.
+$$
+
+
+
+Now using the rest of the predictors using the ARIMAX model, with this additional variables that are not part of the time series(homicide_rate in this case), the model take into account the external influences.
+Although the correlation between the variables is not that great we can use one external variable to see how it affects the RMSE
+this model with external variables takes into consideration the GDP
+
+for the selection of the best values we perform a grid search based on the AIC and include GDP as the correlation variable
+ 
+```{r eval=TRUE, echo=TRUE}
+# ARIMAX using only GDP
+# Using homicide_rate as the series to predict with one exogenous variable GDP 
+s_data <- ts(train_set[, c("homicide_rate", "GDP")], frequency = 1)
+
+# Grid search for p, d, and q
+best_model <- NULL
+best_aic <- Inf
+
+for (p in 0:3) {
+  for (d in 0:1) {
+    for (q in 0:3) {
+      current_model <- Arima(s_data[, "homicide_rate"], order = c(p, d, q), 
+                             xreg = s_data[, "GDP"], optim.control = list(maxit = 1000))
+      current_aic <- AIC(current_model)
+      
+      if (current_aic < best_aic) {
+        best_model <- current_model
+        best_aic <- current_aic
+      }
+    }
+  }
+}
+
+# Print the best model and its AIC
+print(best_model)
+cat("Best AIC:", best_aic)
+
+# Summary of the best model
+summary(best_model)
+
+```
+
+With the best model selected, let's make predictions and calculate the RMSE.
+
+```{r eval=TRUE, echo=TRUE}
+# Use the forecast() function with the exogenous variables for making predictions
+forecast_result <- forecast(best_model, h = 1, xreg = tail(s_data[, "GDP"], 1), level = c(95))
+
+# Combine the last value of the training set with the predicted differences
+predicted_diff <- forecast_result$mean
+predicted_original <- tail(train_set$homicide_rate, 1) + as.numeric(cumsum(predicted_diff))
+
+# Calculate RMSE
+RMSE <- RMSE(predicted_original - test_set$homicide_rate)
+cat("RMSE:", RMSE)
+
+# Visualize the forecast and the confidence intervals
+plot(forecast_result, main = "ARIMAX Forecast", xlab = "Time", ylab = "Homicide Rate")
+lines(train_set$homicide_rate, col = "blue", lty = 1, lwd = 2)  # observed values
+
+```
+
+\begin{equation}
+(1 - \phi_1 B - \phi_2 B^2 - \ldots - \phi_p B^p) (1 - B)^d X_t = c + \varepsilon_t + (1 + \theta_1 B + \theta_2 B^2 + \ldots + \theta_q B^q) + \beta_3 Z_{3,t}
+\end{equation}
+
+where:
+
+$$
+X_t \text{ is the observed time series}.
+$$
+
+$$
+\varepsilon_t \text{ is the error term}.
+$$
+
+$$
+Z_{3,t} \text{ is the GDP}.
+$$
+
+Adjustments are made according to the parameters estimated in the code when fitting the models. Note that the specific coefficients $$(\phi_1, \phi_2, \ldots, \theta_q, \beta_3, \ldots)$$ are determined during the model fitting process.
+
+
+But the RMSE got worse; using GDP as the only external predictor is not effective.
+
+Let's try using all three exogenous variables: unemployment, GDP, and GDP per capita.
+
+```{r eval=TRUE, echo=TRUE}
+# Using homicide_rate as the series to predict using unemployment gdp and gdp_pc
+ts_data <- ts(train_set[, c("homicide_rate", "unemployment_rate", "GDP_pc", "GDP")], frequency = 1)
+
+# Grid search for p, d, and q
+best_model <- NULL
+best_aic <- Inf
+
+for (p in 0:3) {
+  for (d in 0:1) {
+    for (q in 0:3) {
+      current_model <- Arima(ts_data[, "homicide_rate"], order = c(p, d, q),
+                             xreg = ts_data[, c("unemployment_rate", "GDP_pc", "GDP")])
+      current_aic <- AIC(current_model)
+      
+      if (current_aic < best_aic) {
+        best_model <- current_model
+        best_aic <- current_aic
+      }
+    }
+  }
+}
+
+# Print the best model and its AIC
+print(best_model)
+cat("Best AIC:", best_aic)
+
+# Summary of the best model
+summary(best_model)
+```
+
+Now that we have the best model, let's make predictions and calculate the RMSE.
+
+```{r eval=TRUE, echo=TRUE}
+# Use the forecast() function with the exogenous variables for making predictions
+forecast_result <- forecast(best_model, h = 1, 
+                            xreg = tail(ts_data[, c("unemployment_rate", "GDP_pc", "GDP")], 1), level = c(95))
+
+# Combine the last value of the training set with the predicted mean
+predicted_original <- tail(train_set$homicide_rate, 1) + as.numeric(forecast_result$mean)
+
+# Calculate RMSE
+RMSE <- RMSE(predicted_original - test_set$homicide_rate)
+cat("RMSE:", RMSE)
+
+# Visualize the forecast and the confidence intervals
+plot(forecast_result, main = "ARIMAX Forecast", xlab = "Time", ylab = "Homicide Rate")
+lines(train_set$homicide_rate, col = "blue", lty = 1, lwd = 2)  # observed values
+
+```
+
+\begin{equation}
+(1 - \phi_1 B - \phi_2 B^2 - \ldots - \phi_p B^p) (1 - B)^d X_t = c + \varepsilon_t + (1 + \theta_1 B + \theta_2 B^2 + \ldots + \theta_q B^q) + \beta_1 Z_{1,t} + \beta_2 Z_{2,t} + \beta_3 Z_{3,t} 
+\end{equation}
+
+$$
+X_t \text{ is the observed time series}.
+$$
+
+$$
+\varepsilon_t \text{ is the error term}.
+$$
+
+$$
+Z_{1,t} \text{ is the unemployment rate}.
+$$
+
+$$
+Z_{2,t} \text{ is the GDP per capita}.
+$$
+
+$$
+Z_{3,t} \text{ is the GDP}.
+$$
+
+Adjustments are made according to the parameters estimated in the code when fitting the models. Note that the specific coefficients $$\phi_1, \phi_2, \ldots, \theta_q, \beta_1, \beta_2, \beta_3, etc.)$$ are determined during the model fitting process.
+
+
+ARIMAX with all three exogenous variables still does not provide a significant improvement in RMSE.
+
+Now, let's consider an ARMA model (AutoRegressive Moving Average).
+
+```{r eval=TRUE, echo=TRUE}
+# ARMA model using auto.arima()
+# Using homicide_rate as the series to predict
+ts_data <- ts(train_set[, "homicide_rate"], frequency = 1)
+
+# Using auto.arima to automatically select the best ARMA model
+arma_model <- auto.arima(ts_data)
+
+# Print the best ARMA model and its AIC
+print(arma_model)
+cat("AIC for ARMA:", AIC(arma_model))
+
+# Summary of the best ARMA model
+summary(arma_model)
+
+```
+
+With auto.arima(), we can make predictions using the best values obtained from the model.
+
+```{r eval=TRUE, echo=TRUE}
+# Use the forecast() function for making predictions
+forecast_result_arma <- forecast(arma_model, h = 1, level = c(95))
+
+# Combine the last value of the training set with the forecast result
+predicted_original_arma <- tail(train_set$homicide_rate, 1) + 
+  as.numeric(forecast_result_arma$mean)
+
+# Calculate Mean Absolute Error (MAE)
+RMSE_arma <- RMSE(predicted_original_arma - test_set$homicide_rate)
+cat("RMSE for ARMA:", RMSE_arma)
+
+# Visualize the forecast and the confidence intervals for ARMA
+plot(forecast_result_arma, main = "ARMA Forecast", xlab = "Time", ylab = "Homicide Rate")
+lines(train_set$homicide_rate, col = "blue", lty = 1, lwd = 2)  # observed values
+
+```
+
+\begin{equation}
+X_t = c + \phi_1 X_{t-1} + \phi_2 X_{t-2} + \ldots + \phi_p X_{t-p} + \varepsilon_t + \theta_1 \varepsilon_{t-1} + \theta_2 \varepsilon_{t-2} + \ldots + \theta_q \varepsilon_{t-q}
+\end{equation}
+
+Where:
+
+$$
+X_t \text{ is the observed time series.}
+$$
+
+$$
+\varepsilon_t \text{ is the error term.}
+$$
+
+$$
+\phi_1, \phi_2, \ldots, \phi_p \text{ are autoregressive parameters.}
+$$
+
+$$
+X_{t-1}, X_{t-2}, \ldots, X_{t-p} \text{ are lagged values of the time series.}
+$$
+
+$$
+\theta_1, \theta_2, \ldots, \theta_q \text{ are moving average parameters.}
+$$
+
+$$
+\varepsilon_{t-1}, \varepsilon_{t-2}, \ldots, \varepsilon_{t-q} \text{ are lagged values of the forecast errors.}
+$$
+
+With a simpler model, the ARMA approach yields a not significantly improved RMSE. 
+
+
+
+## Conclusions 
+
+```{r echo=FALSE}
+# Create a data frame with the results
+results <- data.frame(
+  Method = c("Average", "Regularized", "ARIMA", "ARIMAX_GDP", "ARIMAX_3", "ARMA"),
+  RMSE = c(11.20, 13.28, 6.33, 11.13, 14.41, 11.17)
+)
+
+# Display the table
+knitr::kable(results, format = "markdown")
+```
+
+Homicide rate prediction is challenging, especially when considering various countries. An RMSE of 6.33 for the best ARIMA model is not excellent. External predictors such as unemployment rate, GDP, and GDP per capita may hinder predictions as their impact varies across countries. A more in-depth investigation into each country's situation and factors influencing homicide rates is recommended.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
